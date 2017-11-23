@@ -85,9 +85,7 @@ typedef struct ips_task_pool
     size_t size;
 } ips_task_pool_t;
 
-typedef struct thread_arg {
-    struct ips_task_pool *p;
-} thread_arg_t;
+
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
@@ -172,28 +170,38 @@ static float maximum_channel_value = 0.0f;
 
 /* Threading Data */
 
-static ips_task_pool_t *pool;
-
 static int number_of_threads = 0;
 
 #pragma mark - Function Definitions
 
+typedef struct thread_arg {
+    struct ips_task_pool *p;
+} thread_arg_t;
+
+static thread_arg_t* thread_args;
 void ips_create_image_processing_task_pool()
 {
-    pool = (ips_task_pool_t*) malloc(sizeof(*pool));
-
-    pool->first_task = NULL;
-    pool->last_task  = NULL;
-    pool->size = 0;
-	
     number_of_threads = ips_utils_get_number_of_cpu_cores();
-	pthread_t* producer_threads = new pthread_t [number_of_threads];
+	
+//	pthread_t* producer_threads = new pthread_t [number_of_threads];
 	pthread_t* consumer_threads = new pthread_t [number_of_threads];
-	thread_arg_t* thread_args = new thread_arg_t [number_of_threads];
-    for (int i = 0; i < number_of_threads; ++i) {
+	thread_args = new thread_arg_t [number_of_threads];
+/*	for (int i = 0; i < number_of_threads; ++i) {
 		thread_args[i].p = pool;
-		if (0 != pthread_create(&consumer_threads[i], NULL, ips_thread_process_image_part, (void *) &pool)) {
+		if (0 != pthread_create(&producer_threads[i], NULL, ips_thread_process_image_part, (void *) &thread_args[i].p)) {
 			fputs("Failed to create a producer thread.\n", stderr);
+		}
+	}
+*/	
+    for (int i = 0; i < number_of_threads; ++i) {
+		ips_task_pool_t *pool;
+		pool = (ips_task_pool_t*) malloc(sizeof(*pool));
+		pool->first_task = NULL;
+		pool->last_task  = NULL;
+		pool->size = 0;
+		thread_args[i].p = pool;
+		if (0 != pthread_create(&consumer_threads[i], NULL, ips_thread_process_image_part, (void *) i)) {
+			fputs("Failed to create a consumer thread.\n", stderr);
 		}
 	}
 }
@@ -201,32 +209,44 @@ void ips_create_image_processing_task_pool()
 /* Image processing tasks for each consumer thread. */
 void *ips_thread_process_image_part(void *args)
 {
-    ips_task_pool_t *pool = (ips_task_pool_t *) args;
+	int i = (int) args;
     ips_task_t *task;
-	//printf("Hello! ");
-	while (pool->size == 0) { 
-		//printf("Here!! "); 
-		pthread_cond_wait(&condition, &mutex);
-		//printf("IamHERE!!!"); 
-        if (pool->size > 0) {
+//	printf("Hello! ");
+//	printf("INDEX %d\n", i);
+//	printf("%d\n", thread_args[i].p->size);
+	int z = 0;
+	/*
+	for(;;) {
+		if(thread_args[i].p->size != 0){
+//			printf("READY");
+			break;
+		}
+	}
+	*/
+	pthread_cond_wait(&condition, &mutex);
+	while (thread_args[i].p->size != 0) { 
+//		printf("Here!! "); 
+		pthread_mutex_unlock(&mutex);
+//		printf("IamHERE!!! "); 
+        if (thread_args[i].p->size > 0) {
+//			printf("Before Lock in ips_thread_process_image_part!! \n");
 			pthread_mutex_lock(&mutex);
-		//	printf("After Lock in ips_thread_process_image_part!! ");
-            task = pool->first_task;
-            pool->first_task = task->next_task;
-            pool->size--;
-            if (!pool->size) {
-                pool->last_task = NULL;
+//			printf("After Lock in ips_thread_process_image_part!! \n");
+            task = thread_args[i].p->first_task;
+            thread_args[i].p->first_task = task->next_task;
+            thread_args[i].p->size--;
+            if (!thread_args[i].p->size) {
+                thread_args[i].p->last_task = NULL;
             }
 			pthread_mutex_unlock(&mutex);
-		//	printf("Unlock in ips_thread_process_image_part!! ");
+//			printf("Unlock in ips_thread_process_image_part!! \n");
             task->image_processing_function(task);
         }
 	}
     return NULL;
 }
 
-void reset_pass_data()
-{
+void reset_pass_data() {
     minimum_channel_value = 0.0f;
     maximum_channel_value = 0.0f;
 }
@@ -239,6 +259,8 @@ void ips_update_image(
          void (*image_processing_function)(struct ips_task* task),
          unsigned int pass, float dt)
 {
+//	printf("number_of_threads %d\n", number_of_threads);
+	
     for (png_uint_32 y = 0; y < image->height; y += number_of_threads) {
         for (png_uint_32 i = 0; i < number_of_threads && ((y + i) < image->height); ++i) {
             png_uint_32 current_row_index = y + i;
@@ -255,8 +277,22 @@ void ips_update_image(
 
             task->next_task = NULL;
 			pthread_mutex_lock(&mutex);
-			//printf("Mutex After Lock IN ips_update_image!!! "); 
-            if (!pool->size) {
+//			printf("Mutex After Lock IN ips_update_image!!! "); 
+            if (!thread_args[i].p->size) {
+                thread_args[i].p->last_task = NULL;
+            }
+            if (!thread_args[i].p->first_task) {
+                thread_args[i].p->first_task = task;
+            }
+            if (thread_args[i].p->last_task) {
+                thread_args[i].p->last_task->next_task = task;
+            }
+            thread_args[i].p->last_task = task;
+            thread_args[i].p->size++;
+//			printf("%d ", thread_args[i].p->size);
+			pthread_mutex_unlock(&mutex);
+/*			
+			if (!pool->size) {
                 pool->last_task = NULL;
             }
             if (!pool->first_task) {
@@ -267,14 +303,14 @@ void ips_update_image(
             }
             pool->last_task = task;
             pool->size++;
-			 
 			pthread_mutex_unlock(&mutex);
-			//printf("Mutex Unlock IN ips_update_image!!! "); 
+*/			
+//			printf("Mutex Unlock IN ips_update_image!!! "); 
         }
     }
-	//printf("Mutex closed broadcast IN ips_update_image!!! ");
+//	printf("Mutex closed broadcast IN ips_update_image!!! ");
 	pthread_cond_broadcast(&condition);
-	//printf("Mutex open broadcast IN ips_update_image!!! ");
+//	printf("Mutex open broadcast IN ips_update_image!!! ");
 }
 
 void ips_set_brightness_and_contrast(ips_task_t *task)
@@ -295,15 +331,13 @@ void ips_set_brightness_and_contrast(ips_task_t *task)
             source_pixel = &(input_image->rows[y][x * channels]);
             destination_pixel = &(output_image->rows[y][x * channels]);
             for (channel = 0; channel < 3; ++channel) {
-			//	pthread_mutex_lock(&mutex);
                 float newValue = new_image_contrast * source_pixel[channel] + new_image_brightness;
-                newValue = IPS_CLAMP(255, 0.0f, 255.0f);
+                newValue = IPS_CLAMP(newValue, 0.0f, 255.0f);
 
                 minimum_channel_value = fmin(maximum_channel_value, newValue);
                 maximum_channel_value = fmax(maximum_channel_value, newValue);
 
                 destination_pixel[channel] = (png_byte) newValue;
-			//	pthread_mutex_unlock(&mutex);
             }
         }
     }
