@@ -74,9 +74,7 @@ typedef struct ips_task
     png_uint_32 last_row_index_to_process;
     void *image_processing_parameters;
     void (*image_processing_function)(struct ips_task *task);
-
     unsigned int pass;
-
     struct ips_task *next_task;
 } ips_task_t;
 
@@ -87,9 +85,14 @@ typedef struct ips_task_pool
     size_t size;
 } ips_task_pool_t;
 
-int maskX[3][3] = {{-1, -2, -1}, {0, 0, 0}, {1, 2, 1}};
-int maskY[3][3] = {{ -1, 0, 1}, { -2, 0, 2}, {-1, 0, 1}};
-int f = 0;
+typedef struct thread_arg {
+    struct ips_task_pool *p;
+} thread_arg_t;
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t mm = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cc = PTHREAD_COND_INITIALIZER;
 
 #pragma mark - Function Prototypes
 
@@ -115,7 +118,6 @@ void ips_create_image_processing_task_pool();
 void *ips_thread_process_image_part(void *args);
 
 void ips_set_brightness_and_contrast(ips_task_t *task);
-// TODO: add a Sobel filter function prototype
 void ips_set_sobel_filter(ips_task_t *task);
 
 GLuint ips_create_texture_from_image(ips_raw_image *image);
@@ -183,12 +185,44 @@ void ips_create_image_processing_task_pool()
     pool->first_task = NULL;
     pool->last_task  = NULL;
     pool->size = 0;
-
+	
     number_of_threads = ips_utils_get_number_of_cpu_cores();
-
+	pthread_t* producer_threads = new pthread_t [number_of_threads];
+	pthread_t* consumer_threads = new pthread_t [number_of_threads];
+	thread_arg_t* thread_args = new thread_arg_t [number_of_threads];
     for (int i = 0; i < number_of_threads; ++i) {
-        // TODO
-    }
+		thread_args[i].p = pool;
+		if (0 != pthread_create(&consumer_threads[i], NULL, ips_thread_process_image_part, (void *) &pool)) {
+			fputs("Failed to create a producer thread.\n", stderr);
+		}
+	}
+}
+
+/* Image processing tasks for each consumer thread. */
+void *ips_thread_process_image_part(void *args)
+{
+    ips_task_pool_t *pool = (ips_task_pool_t *) args;
+    ips_task_t *task;
+	//printf("Hello! ");
+	while (pool->size == 0) { 
+		//printf("Here!! "); 
+		pthread_cond_wait(&condition, &mutex);
+		//printf("IamHERE!!!"); 
+        if (pool->size > 0) {
+			pthread_mutex_lock(&mutex);
+		//	printf("After Lock in ips_thread_process_image_part!! ");
+            task = pool->first_task;
+            pool->first_task = task->next_task;
+            pool->size--;
+            if (!pool->size) {
+                pool->last_task = NULL;
+            }
+			pthread_mutex_unlock(&mutex);
+		//	printf("Unlock in ips_thread_process_image_part!! ");
+            task->image_processing_function(task);
+        }
+	}
+    return NULL;
 }
 
 void reset_pass_data()
@@ -203,9 +237,7 @@ void ips_update_image(
          ips_raw_image_t *image,
          void *image_processing_parameters,
          void (*image_processing_function)(struct ips_task* task),
-         unsigned int pass,
-         float dt
-     )
+         unsigned int pass, float dt)
 {
     for (png_uint_32 y = 0; y < image->height; y += number_of_threads) {
         for (png_uint_32 i = 0; i < number_of_threads && ((y + i) < image->height); ++i) {
@@ -222,19 +254,27 @@ void ips_update_image(
             task->pass = pass;
 
             task->next_task = NULL;
-
+			pthread_mutex_lock(&mutex);
+			//printf("Mutex After Lock IN ips_update_image!!! "); 
+            if (!pool->size) {
+                pool->last_task = NULL;
+            }
             if (!pool->first_task) {
                 pool->first_task = task;
             }
-
             if (pool->last_task) {
                 pool->last_task->next_task = task;
             }
-
             pool->last_task = task;
             pool->size++;
+			 
+			pthread_mutex_unlock(&mutex);
+			//printf("Mutex Unlock IN ips_update_image!!! "); 
         }
     }
+	//printf("Mutex closed broadcast IN ips_update_image!!! ");
+	pthread_cond_broadcast(&condition);
+	//printf("Mutex open broadcast IN ips_update_image!!! ");
 }
 
 void ips_set_brightness_and_contrast(ips_task_t *task)
@@ -255,13 +295,15 @@ void ips_set_brightness_and_contrast(ips_task_t *task)
             source_pixel = &(input_image->rows[y][x * channels]);
             destination_pixel = &(output_image->rows[y][x * channels]);
             for (channel = 0; channel < 3; ++channel) {
+			//	pthread_mutex_lock(&mutex);
                 float newValue = new_image_contrast * source_pixel[channel] + new_image_brightness;
-                newValue = IPS_CLAMP(newValue, 0.0f, 255.0f);
+                newValue = IPS_CLAMP(255, 0.0f, 255.0f);
 
                 minimum_channel_value = fmin(maximum_channel_value, newValue);
                 maximum_channel_value = fmax(maximum_channel_value, newValue);
 
                 destination_pixel[channel] = (png_byte) newValue;
+			//	pthread_mutex_unlock(&mutex);
             }
         }
     }
@@ -312,32 +354,6 @@ void ips_set_sobel_filter(ips_task_t *task)
 
     free(task);
 }
-
-/* Image processing tasks for each consumer thread. */
-void *ips_thread_process_image_part(void *args)
-{
-    ips_task_pool_t *pool = (ips_task_pool_t *) args;
-    ips_task_t *task;
-
-    while (pool->size != 0) {
-        if (pool->size > 0) {
-            // Get a new task
-
-            task = pool->first_task;
-            pool->first_task = task->next_task;
-            pool->size--;
-            if (!pool->size) {
-                pool->last_task = NULL;
-            }
-
-            task->image_processing_function(task);
-        }
-    }
-
-    return NULL;
-}
-
-/* ----- */
 
 void ips_init_gl_window()
 {
@@ -1220,12 +1236,11 @@ void ips_start(char *dropped_file_path)
             static const float brightness_contrast[2] = {100.0f, 2.0f};
             static const unsigned int pass = 1;
 
-            //ips_update_image(source_image, image,(void *)brightness_contrast, ips_set_brightness_and_contrast, pass, dt);
+            ips_update_image(source_image, image,(void *)brightness_contrast, ips_set_brightness_and_contrast, pass, dt);
+			//ips_update_image(source_image, image, NULL, ips_set_sobel_filter, pass, dt);
 			
-			ips_update_image(source_image, image, NULL, ips_set_sobel_filter, pass, dt);
-
             // TODO: remove before enabling threading
-            ips_thread_process_image_part(pool);
+            //ips_thread_process_image_part(pool);
 
             ips_update_texture_from_image(texture, image);
         }
