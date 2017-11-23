@@ -3,6 +3,10 @@
 
     Created by Dmitrii Toksaitov, 2013
 	Changed by Batyi Amatov, 2017
+All tasks finished:
+1) Sobel filter implementation
+2) Brightness and Contrast Parallelization
+3) Sobel Parallelization
 */
 
 #pragma mark - Standard Includes
@@ -1270,8 +1274,8 @@ void ips_start(char *dropped_file_path)
             static const float brightness_contrast[2] = {100.0f, 2.0f};
             static const unsigned int pass = 1;
 
-            ips_update_image(source_image, image,(void *)brightness_contrast, ips_set_brightness_and_contrast, pass, dt);
-			//ips_update_image(source_image, image, NULL, ips_set_sobel_filter, pass, dt);
+            //ips_update_image(source_image, image,(void *)brightness_contrast, ips_set_brightness_and_contrast, pass, dt);
+			ips_update_image(source_image, image, NULL, ips_set_sobel_filter, pass, dt);
 			
             // TODO: remove before enabling threading
             //ips_thread_process_image_part(pool);
