@@ -227,14 +227,16 @@ void *ips_thread_process_image_part(void *args)
 		}
 	}
 	*/
+	
+	pthread_mutex_lock(&mutex);
 	pthread_cond_wait(&condition, &mutex);
+	pthread_mutex_unlock(&mutex);
 	while (thread_args[i].p->size != 0) { 
 //		printf("Here!! "); 
-		pthread_mutex_unlock(&mutex);
 //		printf("IamHERE!!! "); 
         if (thread_args[i].p->size > 0) {
 //			printf("Before Lock in ips_thread_process_image_part!! \n");
-			pthread_mutex_lock(&mutex);
+	//		pthread_mutex_lock(&mutex);
 //			printf("After Lock in ips_thread_process_image_part!! \n");
             task = thread_args[i].p->first_task;
             thread_args[i].p->first_task = task->next_task;
@@ -242,7 +244,7 @@ void *ips_thread_process_image_part(void *args)
             if (!thread_args[i].p->size) {
                 thread_args[i].p->last_task = NULL;
             }
-			pthread_mutex_unlock(&mutex);
+	//		pthread_mutex_unlock(&mutex);
 //			printf("Unlock in ips_thread_process_image_part!! \n");
             task->image_processing_function(task);
         }
@@ -280,7 +282,7 @@ void ips_update_image(
             task->pass = pass;
 
             task->next_task = NULL;
-			pthread_mutex_lock(&mutex);
+	//		pthread_mutex_lock(&mutex);
 //			printf("Mutex After Lock IN ips_update_image!!! "); 
             if (!thread_args[i].p->size) {
                 thread_args[i].p->last_task = NULL;
@@ -294,7 +296,7 @@ void ips_update_image(
             thread_args[i].p->last_task = task;
             thread_args[i].p->size++;
 //			printf("%d ", thread_args[i].p->size);
-			pthread_mutex_unlock(&mutex);
+		//	pthread_mutex_unlock(&mutex);
 /*			
 			if (!pool->size) {
                 pool->last_task = NULL;
