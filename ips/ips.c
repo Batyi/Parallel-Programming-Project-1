@@ -187,16 +187,12 @@ void ips_create_image_processing_task_pool()
 {
     number_of_threads = ips_utils_get_number_of_cpu_cores();
 	
-//	pthread_t* producer_threads = new pthread_t [number_of_threads];
-	pthread_t* consumer_threads = new pthread_t [number_of_threads];
+//	pthread_t* consumer_threads = new pthread_t [number_of_threads];
+	pthread_t *consumer_threads = (pthread_t*) malloc(number_of_threads * sizeof(*consumer_threads));
 	thread_args = new thread_arg_t [number_of_threads];
-/*	for (int i = 0; i < number_of_threads; ++i) {
-		thread_args[i].p = pool;
-		if (0 != pthread_create(&producer_threads[i], NULL, ips_thread_process_image_part, (void *) &thread_args[i].p)) {
-			fputs("Failed to create a producer thread.\n", stderr);
-		}
-	}
-*/	
+
+//    *thread_args = malloc(number_of_threads * sizeof(*thread_args));
+
     for (int i = 0; i < number_of_threads; ++i) {
 		ips_task_pool_t *pool;
 		pool = (ips_task_pool_t*) malloc(sizeof(*pool));
@@ -208,6 +204,8 @@ void ips_create_image_processing_task_pool()
 			fputs("Failed to create a consumer thread.\n", stderr);
 		}
 	}
+    free(consumer_threads);
+	consumer_threads = NULL;
 }
 
 /* Image processing tasks for each consumer thread. */
